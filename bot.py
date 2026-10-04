@@ -5,7 +5,10 @@ import aiohttp
 import asyncpg
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command, CommandStart
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import (
+    InlineKeyboardMarkup, InlineKeyboardButton,
+    ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+)
 
 # ========== НАСТРОЙКИ ==========
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "ТВОЙ_ТОКЕН")
@@ -36,44 +39,27 @@ async def init_db():
     global pool
     pool = await asyncpg.create_pool(DATABASE_URL)
     async with pool.acquire() as conn:
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS films (
-                id SERIAL PRIMARY KEY, title TEXT NOT NULL, description TEXT,
-                genre TEXT DEFAULT 'Другое', country TEXT DEFAULT 'Другое',
-                year TEXT DEFAULT '—', quality TEXT DEFAULT 'HD',
-                rating_kp TEXT DEFAULT '—', rating_imdb TEXT DEFAULT '—',
-                poster_url TEXT, watch_url TEXT,
-                category TEXT DEFAULT 'Фильмы',
-                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS channels (
-                id SERIAL PRIMARY KEY, chat_id TEXT UNIQUE NOT NULL,
-                title TEXT DEFAULT '', added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS orders (
-                id SERIAL PRIMARY KEY, user_id BIGINT NOT NULL, query TEXT NOT NULL,
-                status TEXT DEFAULT 'pending', film_id INTEGER,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS problems (
-                id SERIAL PRIMARY KEY, user_id BIGINT NOT NULL,
-                username TEXT DEFAULT '', text TEXT NOT NULL,
-                status TEXT DEFAULT 'new',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS visits (
-                id SERIAL PRIMARY KEY, user_id BIGINT NOT NULL,
-                visited_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+        await conn.execute("""CREATE TABLE IF NOT EXISTS films (
+            id SERIAL PRIMARY KEY, title TEXT NOT NULL, description TEXT,
+            genre TEXT DEFAULT 'Другое', country TEXT DEFAULT 'Другое',
+            year TEXT DEFAULT '—', quality TEXT DEFAULT 'HD',
+            rating_kp TEXT DEFAULT '—', rating_imdb TEXT DEFAULT '—',
+            poster_url TEXT, watch_url TEXT, category TEXT DEFAULT 'Фильмы',
+            added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+        await conn.execute("""CREATE TABLE IF NOT EXISTS channels (
+            id SERIAL PRIMARY KEY, chat_id TEXT UNIQUE NOT NULL,
+            title TEXT DEFAULT '', added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+        await conn.execute("""CREATE TABLE IF NOT EXISTS orders (
+            id SERIAL PRIMARY KEY, user_id BIGINT NOT NULL, query TEXT NOT NULL,
+            status TEXT DEFAULT 'pending', film_id INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+        await conn.execute("""CREATE TABLE IF NOT EXISTS problems (
+            id SERIAL PRIMARY KEY, user_id BIGINT NOT NULL,
+            username TEXT DEFAULT '', text TEXT NOT NULL,
+            status TEXT DEFAULT 'new', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+        await conn.execute("""CREATE TABLE IF NOT EXISTS visits (
+            id SERIAL PRIMARY KEY, user_id BIGINT NOT NULL,
+            visited_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
     print("✅ База данных инициализирована")
 
 async def close_db():
@@ -82,10 +68,9 @@ async def close_db():
 # ========== ФИЛЬМЫ ==========
 async def add_film(title, description, genre, country, year, quality, rating_kp, rating_imdb, poster_url, watch_url="", category="Фильмы"):
     async with pool.acquire() as conn:
-        row = await conn.fetchrow("""
-            INSERT INTO films (title, description, genre, country, year, quality, rating_kp, rating_imdb, poster_url, watch_url, category)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id
-        """, title, description, genre, country, year, quality, rating_kp, rating_imdb, poster_url, watch_url, category)
+        row = await conn.fetchrow("""INSERT INTO films (title, description, genre, country, year, quality, rating_kp, rating_imdb, poster_url, watch_url, category)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id""",
+            title, description, genre, country, year, quality, rating_kp, rating_imdb, poster_url, watch_url, category)
         return row["id"]
 
 async def get_film(film_id):
@@ -96,32 +81,23 @@ async def get_film(film_id):
 async def get_films(category=None, genre=None, country=None, limit=10, offset=0):
     async with pool.acquire() as conn:
         sql = "SELECT * FROM films WHERE 1=1"; params = []; idx = 1
-        if category and category != "Все":
-            sql += f" AND category = ${idx}"; params.append(category); idx += 1
-        if genre and genre != "Все":
-            sql += f" AND genre LIKE ${idx}"; params.append(f"%{genre}%"); idx += 1
-        if country and country != "Все":
-            sql += f" AND country LIKE ${idx}"; params.append(f"%{country}%"); idx += 1
-        sql += f" ORDER BY added_at DESC LIMIT ${idx} OFFSET ${idx+1}"
-        params.extend([limit, offset])
-        rows = await conn.fetch(sql, *params)
-        return [dict(r) for r in rows]
+        if category and category != "Все": sql += f" AND category = ${idx}"; params.append(category); idx += 1
+        if genre and genre != "Все": sql += f" AND genre LIKE ${idx}"; params.append(f"%{genre}%"); idx += 1
+        if country and country != "Все": sql += f" AND country LIKE ${idx}"; params.append(f"%{country}%"); idx += 1
+        sql += f" ORDER BY added_at DESC LIMIT ${idx} OFFSET ${idx+1}"; params.extend([limit, offset])
+        rows = await conn.fetch(sql, *params); return [dict(r) for r in rows]
 
 async def count_films(category=None, genre=None, country=None):
     async with pool.acquire() as conn:
         sql = "SELECT COUNT(*) FROM films WHERE 1=1"; params = []; idx = 1
-        if category and category != "Все":
-            sql += f" AND category = ${idx}"; params.append(category); idx += 1
-        if genre and genre != "Все":
-            sql += f" AND genre LIKE ${idx}"; params.append(f"%{genre}%"); idx += 1
-        if country and country != "Все":
-            sql += f" AND country LIKE ${idx}"; params.append(f"%{country}%"); idx += 1
+        if category and category != "Все": sql += f" AND category = ${idx}"; params.append(category); idx += 1
+        if genre and genre != "Все": sql += f" AND genre LIKE ${idx}"; params.append(f"%{genre}%"); idx += 1
+        if country and country != "Все": sql += f" AND country LIKE ${idx}"; params.append(f"%{country}%"); idx += 1
         return await conn.fetchval(sql, *params)
 
 async def search_films(query, limit=20):
     async with pool.acquire() as conn:
-        rows = await conn.fetch("SELECT * FROM films WHERE title ILIKE $1 ORDER BY added_at DESC LIMIT $2",
-                                f"%{query}%", limit)
+        rows = await conn.fetch("SELECT * FROM films WHERE title ILIKE $1 ORDER BY added_at DESC LIMIT $2", f"%{query}%", limit)
         return [dict(r) for r in rows]
 
 async def get_genres():
@@ -159,10 +135,8 @@ async def get_channels():
 
 async def add_channel(chat_id, title=""):
     async with pool.acquire() as conn:
-        await conn.execute("""
-            INSERT INTO channels (chat_id, title) VALUES ($1,$2)
-            ON CONFLICT (chat_id) DO UPDATE SET title = EXCLUDED.title
-        """, chat_id, title)
+        await conn.execute("""INSERT INTO channels (chat_id, title) VALUES ($1,$2)
+            ON CONFLICT (chat_id) DO UPDATE SET title = EXCLUDED.title""", chat_id, title)
 
 async def remove_channel(chat_id):
     async with pool.acquire() as conn:
@@ -171,8 +145,7 @@ async def remove_channel(chat_id):
 # ========== ЗАКАЗЫ / ПРОБЛЕМЫ / СТАТИСТИКА ==========
 async def add_order(user_id, query, status="pending", film_id=None):
     async with pool.acquire() as conn:
-        await conn.execute("INSERT INTO orders (user_id, query, status, film_id) VALUES ($1,$2,$3,$4)",
-                          user_id, query, status, film_id)
+        await conn.execute("INSERT INTO orders (user_id, query, status, film_id) VALUES ($1,$2,$3,$4)", user_id, query, status, film_id)
 
 async def get_orders(user_id=None, limit=50):
     async with pool.acquire() as conn:
@@ -184,8 +157,7 @@ async def get_orders(user_id=None, limit=50):
 
 async def add_problem(user_id, username, text):
     async with pool.acquire() as conn:
-        await conn.execute("INSERT INTO problems (user_id, username, text) VALUES ($1,$2,$3)",
-                          user_id, username, text)
+        await conn.execute("INSERT INTO problems (user_id, username, text) VALUES ($1,$2,$3)", user_id, username, text)
 
 async def get_problems(limit=50):
     async with pool.acquire() as conn:
@@ -212,8 +184,7 @@ async def fetch_tmdb_info(title):
             url = f"https://api.themoviedb.org/3/search/movie?api_key={TMDB_API_KEY}&query={title}&language=ru-RU"
             async with session.get(url) as resp:
                 if resp.status != 200: return None
-                data = await resp.json()
-                results = data.get("results", [])
+                data = await resp.json(); results = data.get("results", [])
                 if not results: return None
                 movie_id = results[0]["id"]
             url = f"https://api.themoviedb.org/3/movie/{movie_id}?api_key={TMDB_API_KEY}&language=ru-RU"
@@ -225,13 +196,9 @@ async def fetch_tmdb_info(title):
             year = details.get("release_date", "")[:4]
             poster_path = details.get("poster_path")
             poster_url = f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else None
-            return {
-                "title": details.get("title", title),
-                "description": details.get("overview", ""),
-                "genre": genres or "Другое", "country": countries or "Другое",
-                "year": year, "rating": str(details.get("vote_average", "—")),
-                "poster_url": poster_url,
-            }
+            return {"title": details.get("title", title), "description": details.get("overview", ""),
+                    "genre": genres or "Другое", "country": countries or "Другое", "year": year,
+                    "rating": str(details.get("vote_average", "—")), "poster_url": poster_url}
     except Exception as e:
         print(f"Ошибка TMDB: {e}"); return None
 
@@ -243,10 +210,8 @@ async def is_subscribed(user_id):
     for ch in channels:
         try:
             member = await bot.get_chat_member(chat_id=ch["chat_id"], user_id=user_id)
-            if member.status not in ["member", "administrator", "creator"]:
-                not_sub.append(ch)
-        except Exception:
-            not_sub.append(ch)
+            if member.status not in ["member", "administrator", "creator"]: not_sub.append(ch)
+        except Exception: not_sub.append(ch)
     return len(not_sub) == 0, not_sub
 
 def subscribe_kb(not_sub):
@@ -296,6 +261,14 @@ def back_kb(callback="main_menu"):
         [InlineKeyboardButton(text="⬅️ Назад", callback_data=callback)]
     ])
 
+def reply_menu_kb():
+    """Reply-кнопка «Меню» внизу слева."""
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="📋 Меню")]],
+        resize_keyboard=True,
+        is_persistent=True
+    )
+
 # ========== ХЕЛПЕР ==========
 async def send_section(callback, image_url, caption, keyboard):
     if image_url:
@@ -322,8 +295,7 @@ def format_film(film):
         f"💎 Качество: {film['quality']}\n"
         f"📁 Категория: {film['category']}\n"
         f"🎭 Жанр: {film['genre']}\n"
-        f"📅 Год: {film['year']}\n"
-    )
+        f"📅 Год: {film['year']}\n")
     if film.get("description"):
         text += f"\n📝 {film['description'][:300]}\n"
     return text
@@ -340,11 +312,27 @@ def film_kb(film_id):
 @dp.message(CommandStart())
 async def start_cmd(message: types.Message):
     await add_visit(message.from_user.id)
+    user_states[message.from_user.id] = None  # Сброс состояния
     ok, not_sub = await is_subscribed(message.from_user.id)
     if not ok:
         await message.answer(
             f"Салам, {message.from_user.first_name}! 👋\n\nДля использования бота подпишись на каналы:",
             reply_markup=subscribe_kb(not_sub)); return
+    welcome = (
+        f"Добро пожаловать, {message.from_user.first_name}! 👋\n\n"
+        "Здесь ты можешь найти и посмотреть любимые фильмы в удобном формате."
+    )
+    is_admin = message.from_user.id == ADMIN_ID
+    try:
+        await message.answer_photo(photo=IMG_MAIN, caption=welcome, reply_markup=main_menu_kb(is_admin), parse_mode="HTML")
+    except Exception:
+        await message.answer(welcome, reply_markup=main_menu_kb(is_admin), parse_mode="HTML")
+    # 👇 Reply-кнопка "Меню"
+    await message.answer("📋 Кнопка меню появилась внизу слева 👇", reply_markup=reply_menu_kb())
+
+@dp.message(lambda m: m.text == "📋 Меню")
+async def menu_button(message: types.Message):
+    user_states[message.from_user.id] = None
     welcome = (
         f"Добро пожаловать, {message.from_user.first_name}! 👋\n\n"
         "Здесь ты можешь найти и посмотреть любимые фильмы в удобном формате."
@@ -365,8 +353,7 @@ async def check_sub(callback: types.CallbackQuery):
 async def main_menu(callback: types.CallbackQuery):
     welcome = (
         f"Добро пожаловать, {callback.from_user.first_name}! 👋\n\n"
-        "Здесь ты можешь найти и посмотреть любимые фильмы в удобном формате."
-    )
+        "Здесь ты можешь найти и посмотреть любимые фильмы в удобном формате.")
     is_admin = callback.from_user.id == ADMIN_ID
     await send_section(callback, IMG_MAIN, welcome, main_menu_kb(is_admin))
 
@@ -375,52 +362,42 @@ async def noop(callback: types.CallbackQuery): await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "about")
 async def about(callback: types.CallbackQuery):
-    text = (
-        "☀️ <b>О проекте</b>\n\n"
-        "🎬 <b>Sq1dKino | Фильмы</b> — Telegram-бот для удобного поиска фильмов.\n\n"
-        "📌 <b>Что умеет:</b>\n"
-        "• 🔍 Поиск фильмов по названию\n• 🆕 Новинки кинематографа\n"
-        "• 🍿 Фильтр по жанрам\n• 🌍 Фильтр по странам\n"
-        "• 🛒 Заявки на добавление фильмов\n\n"
-        "👥 <b>Для кого:</b> для всех любителей кино.\n\n"
-        "💡 <b>Как пользоваться:</b> открой «Поиск», введи название, выбери фильм, нажми «Смотреть онлайн»."
-    )
+    text = ("☀️ <b>О проекте</b>\n\n"
+            "🎬 <b>Sq1dKino | Фильмы</b> — Telegram-бот для удобного поиска фильмов.\n\n"
+            "📌 <b>Что умеет:</b>\n• 🔍 Поиск фильмов\n• 🆕 Новинки\n• 🍿 Жанры\n• 🌍 Страны\n• 🛒 Заявки\n\n"
+            "👥 <b>Для кого:</b> для всех любителей кино.\n\n"
+            "💡 <b>Как пользоваться:</b> открой «Поиск», введи название, выбери фильм.")
     await send_section(callback, IMG_ABOUT, text, back_kb())
 
 @dp.callback_query(lambda c: c.data == "profile")
 async def profile(callback: types.CallbackQuery):
     user = callback.from_user
-    text = (
-        f"👤 <b>Мой профиль</b>\n\n"
-        f"🆔 ID: <code>{user.id}</code>\n"
-        f"📛 Имя: {user.full_name}\n"
-        f"🔗 Username: @{user.username or '—'}"
-    )
+    text = (f"👤 <b>Мой профиль</b>\n\n"
+            f"🆔 ID: <code>{user.id}</code>\n"
+            f"📛 Имя: {user.full_name}\n"
+            f"🔗 Username: @{user.username or '—'}")
     await send_section(callback, IMG_PROFILE, text, back_kb())
 
 # ===== ТЕХ ПОДДЕРЖКА =====
 @dp.callback_query(lambda c: c.data == "support")
 async def support(callback: types.CallbackQuery):
-    text = (
-        "🛠 <b>Тех. поддержка</b>\n\n"
-        "Если у тебя возникла проблема или ты нашёл баг — напиши нам, мы всё рассмотрим."
-    )
+    text = "🛠 <b>Тех. поддержка</b>\n\nЕсли возникла проблема или нашёл баг — напиши нам."
     await send_section(callback, IMG_SUPPORT, text, support_menu_kb())
 
 @dp.callback_query(lambda c: c.data == "problem_write")
 async def problem_write(callback: types.CallbackQuery):
     user_states[callback.from_user.id] = "problem_write"
     await callback.message.edit_text(
-        "✍️ <b>Написать о проблеме</b>\n\nОпиши подробно свою проблему или баг. Админ рассмотрит её в ближайшее время.",
-        reply_markup=back_kb("support"))
+        "✍️ <b>Написать о проблеме</b>\n\nОпиши подробно свою проблему или баг.",
+        reply_markup=back_kb("support"),
+        parse_mode="HTML")
 
 # ===== СТОЛ ЗАКАЗОВ =====
 @dp.callback_query(lambda c: c.data == "orders")
 async def orders(callback: types.CallbackQuery):
     user_orders = await get_orders(callback.from_user.id)
     text = "🛒 <b>Стол заказов</b>\n\n"
-    if not user_orders:
-        text += "У тебя пока нет заявок.\n\n"
+    if not user_orders: text += "У тебя пока нет заявок.\n\n"
     else:
         text += "История твоих заявок:\n\n"
         for o in user_orders[:10]:
@@ -446,14 +423,12 @@ async def admin_stats(callback: types.CallbackQuery):
     if callback.from_user.id != ADMIN_ID: return
     stats = await get_visits_stats()
     films_count = await count_films()
-    text = (
-        f"📊 <b>Статистика</b>\n\n"
-        f"👥 Заходов за сегодня: <b>{stats['day']}</b>\n"
-        f"📅 За неделю: <b>{stats['week']}</b>\n"
-        f"🗓 За месяц: <b>{stats['month']}</b>\n"
-        f"📈 Всего заходов: <b>{stats['total']}</b>\n\n"
-        f"🎬 Фильмов в каталоге: <b>{films_count}</b>"
-    )
+    text = (f"📊 <b>Статистика</b>\n\n"
+            f"👥 Заходов за сегодня: <b>{stats['day']}</b>\n"
+            f"📅 За неделю: <b>{stats['week']}</b>\n"
+            f"🗓 За месяц: <b>{stats['month']}</b>\n"
+            f"📈 Всего заходов: <b>{stats['total']}</b>\n\n"
+            f"🎬 Фильмов в каталоге: <b>{films_count}</b>")
     await callback.message.edit_text(text, reply_markup=back_kb("admin_panel"), parse_mode="HTML")
 
 @dp.callback_query(lambda c: c.data == "admin_requests")
@@ -461,17 +436,14 @@ async def admin_requests(callback: types.CallbackQuery):
     if callback.from_user.id != ADMIN_ID: return
     orders_list = await get_orders()
     problems = await get_problems()
-    text = "🛒 <b>Заявки и заказы</b>\n\n"
-    text += "<b>Заказы фильмов:</b>\n"
-    if not orders_list:
-        text += "• Пусто\n"
+    text = "🛒 <b>Заявки и заказы</b>\n\n<b>Заказы фильмов:</b>\n"
+    if not orders_list: text += "• Пусто\n"
     else:
         for o in orders_list[:10]:
             status = "✅" if o["status"] == "added" else "⏳"
             text += f"{status} «{o['query']}» от <code>{o['user_id']}</code>\n"
     text += "\n<b>Проблемы:</b>\n"
-    if not problems:
-        text += "• Пусто\n"
+    if not problems: text += "• Пусто\n"
     else:
         for p in problems[:10]:
             status = "✅" if p["status"] == "resolved" else "🆕"
@@ -486,13 +458,11 @@ async def admin_channels(callback: types.CallbackQuery):
     if channels:
         for i, ch in enumerate(channels, 1):
             text += f"{i}. {ch['title'] or ch['chat_id']}\n   <code>{ch['chat_id']}</code>\n"
-    else:
-        text += "Список пуст.\n"
+    else: text += "Список пуст.\n"
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="➕ Добавить", callback_data="admin_add_channel")],
         [InlineKeyboardButton(text="🗑 Удалить", callback_data="admin_del_channel")],
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_panel")]
-    ])
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_panel")]])
     await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
 
 @dp.callback_query(lambda c: c.data == "admin_add_channel")
@@ -523,8 +493,7 @@ async def admin_del_film(callback: types.CallbackQuery):
 async def admin_list_films(callback: types.CallbackQuery):
     if callback.from_user.id != ADMIN_ID: return
     films = await get_films(limit=100)
-    if not films:
-        await callback.message.edit_text("База пуста.", reply_markup=back_kb("admin_panel")); return
+    if not films: await callback.message.edit_text("База пуста.", reply_markup=back_kb("admin_panel")); return
     text = "📋 <b>Фильмы:</b>\n\n" + "\n".join([f"ID {f['id']} — {f['title']}" for f in films])
     await callback.message.edit_text(text[:4000], reply_markup=back_kb("admin_panel"), parse_mode="HTML")
 
@@ -534,8 +503,7 @@ async def show_new(callback: types.CallbackQuery):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎬 Фильмы", callback_data="new_cat_Фильмы")],
         [InlineKeyboardButton(text="📺 Сериалы", callback_data="new_cat_Сериалы")],
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu")]
-    ])
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu")]])
     await send_section(callback, IMG_NEW, "🆕 <b>Новинки</b>\n\nВыбери категорию:", kb)
 
 @dp.callback_query(lambda c: c.data.startswith("new_cat_"))
@@ -546,8 +514,7 @@ async def show_new_category(callback: types.CallbackQuery):
 @dp.callback_query(lambda c: c.data == "genres")
 async def show_genres(callback: types.CallbackQuery):
     genres = await get_genres()
-    if not genres:
-        await send_section(callback, IMG_GENRES, "🍿 <b>Жанры</b>\n\nПока нет фильмов.", back_kb()); return
+    if not genres: await send_section(callback, IMG_GENRES, "🍿 <b>Жанры</b>\n\nПока нет фильмов.", back_kb()); return
     buttons = []; row = []
     for g in genres:
         row.append(InlineKeyboardButton(text=f"🍿 {g}", callback_data=f"genre_{g}"))
@@ -564,8 +531,7 @@ async def show_genre_films(callback: types.CallbackQuery):
 @dp.callback_query(lambda c: c.data == "countries")
 async def show_countries(callback: types.CallbackQuery):
     countries = await get_countries()
-    if not countries:
-        await send_section(callback, IMG_COUNTRIES, "🌍 <b>Страны</b>\n\nПока нет фильмов.", back_kb()); return
+    if not countries: await send_section(callback, IMG_COUNTRIES, "🌍 <b>Страны</b>\n\nПока нет фильмов.", back_kb()); return
     buttons = []; row = []
     for cn in countries[:30]:
         row.append(InlineKeyboardButton(text=f"🌍 {cn}", callback_data=f"country_{cn}"))
@@ -584,8 +550,7 @@ async def show_films_page(callback, category=None, genre=None, country=None, pag
     films = await get_films(category=category, genre=genre, country=country, limit=limit, offset=offset)
     total = await count_films(category=category, genre=genre, country=country)
     total_pages = max(1, (total + limit - 1) // limit)
-    if not films:
-        await callback.message.edit_text("😔 Ничего не найдено.", reply_markup=back_kb("main_menu")); return
+    if not films: await callback.message.edit_text("😔 Ничего не найдено.", reply_markup=back_kb("main_menu")); return
     buttons = []
     for f in films:
         buttons.append([InlineKeyboardButton(text=f"🎬 {f['title']}", callback_data=f"view_{f['id']}")])
@@ -611,8 +576,7 @@ async def paginate(callback: types.CallbackQuery):
 async def view_film(callback: types.CallbackQuery):
     film_id = int(callback.data.split("_")[1])
     film = await get_film(film_id)
-    if not film:
-        await callback.answer("Фильм не найден", show_alert=True); return
+    if not film: await callback.answer("Фильм не найден", show_alert=True); return
     text = format_film(film); poster_url = film.get("poster_url"); kb = film_kb(film_id)
     try:
         if poster_url:
@@ -668,7 +632,7 @@ async def handle_text(message: types.Message):
     if state == "problem_write":
         user_states[user_id] = None
         await add_problem(user_id, message.from_user.username or "", text)
-        await message.answer("✅ Спасибо! Твоя заявка отправлена админу. Мы рассмотрим её в ближайшее время.")
+        await message.answer("✅ Спасибо! Заявка отправлена админу.")
         return
 
     if state == "order_film":
@@ -677,7 +641,7 @@ async def handle_text(message: types.Message):
         info = await fetch_tmdb_info(text)
         if not info:
             await add_order(user_id, text, status="pending")
-            await message.answer("😔 Не найдено. Заявка сохранена — админ добавит вручную."); return
+            await message.answer("😔 Не найдено. Заявка сохранена."); return
         film_id = await add_film(info["title"], info["description"], info["genre"], info["country"],
                                  info["year"], "FHD (1080p)", info["rating"], info["rating"], info["poster_url"])
         await add_order(user_id, text, status="added", film_id=film_id)
@@ -720,6 +684,17 @@ async def handle_text(message: types.Message):
         except ValueError: pass
 
 # ===== КОМАНДЫ =====
+@dp.message(Command("menu"))
+async def menu_cmd(message: types.Message):
+    user_states[message.from_user.id] = None
+    welcome = (f"Добро пожаловать, {message.from_user.first_name}! 👋\n\n"
+               "Здесь ты можешь найти и посмотреть любимые фильмы в удобном формате.")
+    is_admin = message.from_user.id == ADMIN_ID
+    try:
+        await message.answer_photo(photo=IMG_MAIN, caption=welcome, reply_markup=main_menu_kb(is_admin), parse_mode="HTML")
+    except Exception:
+        await message.answer(welcome, reply_markup=main_menu_kb(is_admin), parse_mode="HTML")
+
 @dp.message(Command("admin"))
 async def admin_cmd(message: types.Message):
     if message.from_user.id != ADMIN_ID: return
