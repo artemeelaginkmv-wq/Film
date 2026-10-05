@@ -24,9 +24,9 @@ IMG_COUNTRIES = os.environ.get("IMG_COUNTRIES", "https://i.imgur.com/QuLhiWY.jpe
 IMG_SEARCH = os.environ.get("IMG_SEARCH", "https://i.imgur.com/rocsBTG.png")
 IMG_ORDER = os.environ.get("IMG_ORDER", "https://i.imgur.com/MYSHR4h.jpeg")
 IMG_ADMIN = os.environ.get("IMG_ADMIN", "https://i.imgur.com/ntREPaT.jpeg")
-IMG_PROFILE = os.environ.get("IMG_PROFILE", "https://i.imgur.com/ZgAfnSc.png")
+IMG_PROFILE = os.environ.get("IMG_PROFILE", "https://i.imgur.com/YjHecKp.jpeg")
 IMG_SEARCH_RESULTS = os.environ.get("IMG_SEARCH_RESULTS", "https://i.imgur.com/H4rOiN0.jpeg")
-IMG_ABOUT = os.environ.get("IMG_ABOUT", "")
+IMG_ABOUT = os.environ.get("IMG_ABOUT", "https://i.imgur.com/Z305Z0g.png")
 IMG_SUPPORT = os.environ.get("IMG_SUPPORT", "")
 
 bot = Bot(token=BOT_TOKEN)
@@ -142,10 +142,12 @@ async def remove_channel(chat_id):
     async with pool.acquire() as conn:
         await conn.execute("DELETE FROM channels WHERE chat_id = $1", chat_id)
 
-# ========== ЗАКАЗЫ / ПРОБЛЕМЫ / СТАТИСТИКА ==========
+# ========== ЗАКАЗЫ / ПРОБЛЕМЫ ==========
 async def add_order(user_id, query, status="pending", film_id=None):
     async with pool.acquire() as conn:
-        await conn.execute("INSERT INTO orders (user_id, query, status, film_id) VALUES ($1,$2,$3,$4)", user_id, query, status, film_id)
+        row = await conn.fetchrow("INSERT INTO orders (user_id, query, status, film_id) VALUES ($1,$2,$3,$4) RETURNING id",
+                                 user_id, query, status, film_id)
+        return row["id"]
 
 async def get_orders(user_id=None, limit=50):
     async with pool.acquire() as conn:
@@ -155,15 +157,31 @@ async def get_orders(user_id=None, limit=50):
             rows = await conn.fetch("SELECT * FROM orders ORDER BY created_at DESC LIMIT $1", limit)
         return [dict(r) for r in rows]
 
+async def resolve_order(order_id):
+    async with pool.acquire() as conn:
+        await conn.execute("UPDATE orders SET status = 'added' WHERE id = $1", order_id)
+
 async def add_problem(user_id, username, text):
     async with pool.acquire() as conn:
-        await conn.execute("INSERT INTO problems (user_id, username, text) VALUES ($1,$2,$3)", user_id, username, text)
+        row = await conn.fetchrow("INSERT INTO problems (user_id, username, text) VALUES ($1,$2,$3) RETURNING id",
+                                 user_id, username, text)
+        return row["id"]
 
 async def get_problems(limit=50):
     async with pool.acquire() as conn:
         rows = await conn.fetch("SELECT * FROM problems ORDER BY created_at DESC LIMIT $1", limit)
         return [dict(r) for r in rows]
 
+async def get_user_problems(user_id, limit=50):
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("SELECT * FROM problems WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2", user_id, limit)
+        return [dict(r) for r in rows]
+
+async def resolve_problem(problem_id):
+    async with pool.acquire() as conn:
+        await conn.execute("UPDATE problems SET status = 'resolved' WHERE id = $1", problem_id)
+
+# ========== СТАТИСТИКА ==========
 async def add_visit(user_id):
     async with pool.acquire() as conn:
         await conn.execute("INSERT INTO visits (user_id) VALUES ($1)", user_id)
@@ -256,6 +274,12 @@ def support_menu_kb():
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu")]
     ])
 
+def profile_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📋 Мои заявки", callback_data="my_requests")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu")]
+    ])
+
 def back_kb(callback="main_menu"):
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="⬅️ Назад", callback_data=callback)]
@@ -270,7 +294,6 @@ def reply_menu_kb():
 
 # ========== ХЕЛПЕР ==========
 async def send_section(callback, image_url, caption, keyboard):
-    """Отправляет раздел с картинкой (если есть) или только текстом."""
     if image_url:
         try:
             await callback.message.edit_media(
@@ -288,11 +311,8 @@ async def send_section(callback, image_url, caption, keyboard):
         await callback.message.answer(caption, reply_markup=keyboard, parse_mode="HTML")
 
 async def send_text_section(callback, caption, keyboard):
-    """Отправляет только текст — удаляет старое сообщение (если было фото)."""
-    try:
-        await callback.message.delete()
-    except Exception:
-        pass
+    try: await callback.message.delete()
+    except Exception: pass
     await callback.message.answer(caption, reply_markup=keyboard, parse_mode="HTML")
 
 def format_film(film):
@@ -312,7 +332,6 @@ def film_kb(film_id):
     site_url = f"{SITE_URL}/film/{film_id}"
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="😍 Смотреть онлайн", url=site_url)],
-        [InlineKeyboardButton(text="📦 Трейлер", url=site_url)],
         [InlineKeyboardButton(text="🏠 Меню", callback_data="main_menu")]
     ])
 
@@ -372,14 +391,37 @@ async def about(callback: types.CallbackQuery):
             "💡 <b>Как пользоваться:</b> открой «Поиск», введи название, выбери фильм.")
     await send_section(callback, IMG_ABOUT, text, back_kb())
 
+# ===== ПРОФИЛЬ =====
 @dp.callback_query(lambda c: c.data == "profile")
 async def profile(callback: types.CallbackQuery):
-    user = callback.from_user
-    text = (f"👤 <b>Мой профиль</b>\n\n"
-            f"🆔 ID: <code>{user.id}</code>\n"
-            f"📛 Имя: {user.full_name}\n"
-            f"🔗 Username: @{user.username or '—'}")
-    await send_section(callback, IMG_PROFILE, text, back_kb())
+    text = "👤 <b>Немного о моём проекте</b>\n\nЗдесь ты можешь посмотреть свои заявки и запросы."
+    await send_section(callback, IMG_PROFILE, text, profile_kb())
+
+@dp.callback_query(lambda c: c.data == "my_requests")
+async def my_requests(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    user_problems = await get_user_problems(user_id)
+    user_orders = await get_orders(user_id)
+
+    text = "📋 <b>Мои заявки</b>\n\n"
+
+    text += "<b>🛠 Заявки в тех. поддержку:</b>\n"
+    if not user_problems:
+        text += "• Пусто\n"
+    else:
+        for p in user_problems[:10]:
+            status = "✅ Решена" if p["status"] == "resolved" else "🆕 В обработке"
+            text += f"• «{p['text'][:60]}...» — {status}\n"
+
+    text += "\n<b>🎬 Запросы на фильмы:</b>\n"
+    if not user_orders:
+        text += "• Пусто\n"
+    else:
+        for o in user_orders[:10]:
+            status = "✅ Добавлен" if o["status"] == "added" else "⏳ В обработке"
+            text += f"• «{o['query']}» — {status}\n"
+
+    await send_text_section(callback, text, back_kb("profile"))
 
 # ===== ТЕХ ПОДДЕРЖКА =====
 @dp.callback_query(lambda c: c.data == "support")
@@ -445,13 +487,16 @@ async def admin_requests(callback: types.CallbackQuery):
     else:
         for o in orders_list[:10]:
             status = "✅" if o["status"] == "added" else "⏳"
-            text += f"{status} «{o['query']}» от <code>{o['user_id']}</code>\n"
+            text += f"ID {o['id']}: {status} «{o['query']}» от <code>{o['user_id']}</code>\n"
     text += "\n<b>Проблемы:</b>\n"
     if not problems: text += "• Пусто\n"
     else:
         for p in problems[:10]:
             status = "✅" if p["status"] == "resolved" else "🆕"
-            text += f"{status} <code>{p['user_id']}</code>: {p['text'][:80]}...\n"
+            text += f"ID {p['id']}: {status} <code>{p['user_id']}</code> — {p['text'][:60]}...\n"
+    text += "\n\n<b>Команды:</b>\n"
+    text += "<code>/resolve_problem ID</code> — пометить проблему решённой\n"
+    text += "<code>/resolve_order ID</code> — пометить заказ выполненным"
     await send_text_section(callback, text[:4000], back_kb("admin_panel"))
 
 @dp.callback_query(lambda c: c.data == "admin_channels")
@@ -635,8 +680,8 @@ async def handle_text(message: types.Message):
 
     if state == "problem_write":
         user_states[user_id] = None
-        await add_problem(user_id, message.from_user.username or "", text)
-        await message.answer("✅ Спасибо! Заявка отправлена админу.")
+        pid = await add_problem(user_id, message.from_user.username or "", text)
+        await message.answer(f"✅ Спасибо! Заявка №{pid} отправлена админу.")
         return
 
     if state == "order_film":
@@ -644,11 +689,11 @@ async def handle_text(message: types.Message):
         await message.answer(f"⏳ Ищу «{text}»...")
         info = await fetch_tmdb_info(text)
         if not info:
-            await add_order(user_id, text, status="pending")
-            await message.answer("😔 Не найдено. Заявка сохранена."); return
+            oid = await add_order(user_id, text, status="pending")
+            await message.answer(f"😔 Не найдено. Заявка №{oid} сохранена."); return
         film_id = await add_film(info["title"], info["description"], info["genre"], info["country"],
                                  info["year"], "FHD (1080p)", info["rating"], info["rating"], info["poster_url"])
-        await add_order(user_id, text, status="added", film_id=film_id)
+        oid = await add_order(user_id, text, status="added", film_id=film_id)
         await message.answer(f"✅ «{info['title']}» добавлен в каталог!"); return
 
     if state == "search" or not state:
@@ -736,6 +781,27 @@ async def list_films_cmd(message: types.Message):
     if not films: await message.answer("База пуста."); return
     text = "📋 Фильмы:\n\n" + "\n".join([f"ID {f['id']} — {f['title']}" for f in films])
     await message.answer(text[:4000])
+
+# ===== АДМИН: РЕШЕНИЕ ЗАЯВОК =====
+@dp.message(Command("resolve_problem"))
+async def resolve_problem_cmd(message: types.Message):
+    if message.from_user.id != ADMIN_ID: return
+    args = message.text.replace("/resolve_problem", "").strip()
+    if not args: await message.answer("Напиши: /resolve_problem ID"); return
+    try:
+        await resolve_problem(int(args))
+        await message.answer(f"✅ Проблема ID {args} помечена как решённая.")
+    except ValueError: await message.answer("❌ ID должен быть числом.")
+
+@dp.message(Command("resolve_order"))
+async def resolve_order_cmd(message: types.Message):
+    if message.from_user.id != ADMIN_ID: return
+    args = message.text.replace("/resolve_order", "").strip()
+    if not args: await message.answer("Напиши: /resolve_order ID"); return
+    try:
+        await resolve_order(int(args))
+        await message.answer(f"✅ Заказ ID {args} помечен как выполненный.")
+    except ValueError: await message.answer("❌ ID должен быть числом.")
 
 # ===== ЗАПУСК =====
 async def main():
