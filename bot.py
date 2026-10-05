@@ -394,8 +394,8 @@ async def about(callback: types.CallbackQuery):
 # ===== ПРОФИЛЬ =====
 @dp.callback_query(lambda c: c.data == "profile")
 async def profile(callback: types.CallbackQuery):
-    text = "👤 <b>Немного о моём проекте</b>\n\nЗдесь ты можешь посмотреть свои заявки и запросы."
-    await send_section(callback, IMG_PROFILE, text, profile_kb())
+    # Без текста — только картинка и кнопка
+    await send_section(callback, IMG_PROFILE, "👤", profile_kb())
 
 @dp.callback_query(lambda c: c.data == "my_requests")
 async def my_requests(callback: types.CallbackQuery):
@@ -641,7 +641,79 @@ async def search_menu(callback: types.CallbackQuery):
     user_states[callback.from_user.id] = "search"
     await send_section(callback, IMG_SEARCH, "🔍 <b>Поиск по названию</b>\n\nНапиши название фильма.", back_kb())
 
-# ===== ТЕКСТ =====
+# ===== КОМАНДЫ (ВАЖНО: ВЫШЕ handle_text) =====
+@dp.message(Command("menu"))
+async def menu_cmd(message: types.Message):
+    user_states[message.from_user.id] = None
+    welcome = (f"Добро пожаловать, {message.from_user.first_name}! 👋\n\n"
+               "Здесь ты можешь найти и посмотреть любимые фильмы в удобном формате.")
+    is_admin = message.from_user.id == ADMIN_ID
+    try:
+        await message.answer_photo(photo=IMG_MAIN, caption=welcome, reply_markup=main_menu_kb(is_admin), parse_mode="HTML")
+    except Exception:
+        await message.answer(welcome, reply_markup=main_menu_kb(is_admin), parse_mode="HTML")
+
+@dp.message(Command("admin"))
+async def admin_cmd(message: types.Message):
+    if message.from_user.id != ADMIN_ID: return
+    try:
+        await message.answer_photo(photo=IMG_ADMIN, caption="⚙️ <b>Панель управления</b>", reply_markup=admin_menu_kb(), parse_mode="HTML")
+    except Exception:
+        await message.answer("⚙️ Панель управления", reply_markup=admin_menu_kb())
+
+@dp.message(Command("addfilm"))
+async def add_film_cmd(message: types.Message):
+    if message.from_user.id != ADMIN_ID: return
+    args = message.text.replace("/addfilm", "").strip()
+    if not args: await message.answer("Напиши: /addfilm Название"); return
+    await message.answer(f"⏳ Ищу «{args}»...")
+    info = await fetch_tmdb_info(args)
+    if not info: await message.answer("❌ Не найдено."); return
+    await add_film(info["title"], info["description"], info["genre"], info["country"],
+                  info["year"], "FHD (1080p)", info["rating"], info["rating"], info["poster_url"])
+    await message.answer(f"✅ «{info['title']}» добавлен!")
+
+@dp.message(Command("delfilm"))
+async def del_film_cmd(message: types.Message):
+    if message.from_user.id != ADMIN_ID: return
+    args = message.text.replace("/delfilm", "").strip()
+    if not args: await message.answer("Напиши: /delfilm ID"); return
+    try:
+        name = await delete_film(int(args))
+        await message.answer(f"✅ «{name}» удалён." if name else "❌ Не найден.")
+    except ValueError: await message.answer("❌ ID должен быть числом.")
+
+@dp.message(Command("listfilms"))
+async def list_films_cmd(message: types.Message):
+    if message.from_user.id != ADMIN_ID: return
+    films = await get_films(limit=100)
+    if not films: await message.answer("База пуста."); return
+    text = "📋 Фильмы:\n\n" + "\n".join([f"ID {f['id']} — {f['title']}" for f in films])
+    await message.answer(text[:4000])
+
+@dp.message(Command("resolve_problem"))
+async def resolve_problem_cmd(message: types.Message):
+    if message.from_user.id != ADMIN_ID: return
+    args = message.text.replace("/resolve_problem", "").strip()
+    args = args.replace("ID", "").replace("id", "").strip()
+    if not args: await message.answer("Напиши: /resolve_problem ID"); return
+    try:
+        await resolve_problem(int(args))
+        await message.answer(f"✅ Проблема ID {args} помечена как решённая.")
+    except ValueError: await message.answer("❌ ID должен быть числом.")
+
+@dp.message(Command("resolve_order"))
+async def resolve_order_cmd(message: types.Message):
+    if message.from_user.id != ADMIN_ID: return
+    args = message.text.replace("/resolve_order", "").strip()
+    args = args.replace("ID", "").replace("id", "").strip()
+    if not args: await message.answer("Напиши: /resolve_order ID"); return
+    try:
+        await resolve_order(int(args))
+        await message.answer(f"✅ Заказ ID {args} помечен как выполненный.")
+    except ValueError: await message.answer("❌ ID должен быть числом.")
+
+# ===== УНИВЕРСАЛЬНЫЙ ОБРАБОТЧИК (ПОСЛЕДНИЙ) =====
 @dp.message()
 async def handle_text(message: types.Message):
     if not message.text or message.text.startswith("/"): return
@@ -731,77 +803,6 @@ async def handle_text(message: types.Message):
                         await message.answer(text_film, reply_markup=kb, parse_mode="HTML")
                 return
         except ValueError: pass
-
-# ===== КОМАНДЫ =====
-@dp.message(Command("menu"))
-async def menu_cmd(message: types.Message):
-    user_states[message.from_user.id] = None
-    welcome = (f"Добро пожаловать, {message.from_user.first_name}! 👋\n\n"
-               "Здесь ты можешь найти и посмотреть любимые фильмы в удобном формате.")
-    is_admin = message.from_user.id == ADMIN_ID
-    try:
-        await message.answer_photo(photo=IMG_MAIN, caption=welcome, reply_markup=main_menu_kb(is_admin), parse_mode="HTML")
-    except Exception:
-        await message.answer(welcome, reply_markup=main_menu_kb(is_admin), parse_mode="HTML")
-
-@dp.message(Command("admin"))
-async def admin_cmd(message: types.Message):
-    if message.from_user.id != ADMIN_ID: return
-    try:
-        await message.answer_photo(photo=IMG_ADMIN, caption="⚙️ <b>Панель управления</b>", reply_markup=admin_menu_kb(), parse_mode="HTML")
-    except Exception:
-        await message.answer("⚙️ Панель управления", reply_markup=admin_menu_kb())
-
-@dp.message(Command("addfilm"))
-async def add_film_cmd(message: types.Message):
-    if message.from_user.id != ADMIN_ID: return
-    args = message.text.replace("/addfilm", "").strip()
-    if not args: await message.answer("Напиши: /addfilm Название"); return
-    await message.answer(f"⏳ Ищу «{args}»...")
-    info = await fetch_tmdb_info(args)
-    if not info: await message.answer("❌ Не найдено."); return
-    await add_film(info["title"], info["description"], info["genre"], info["country"],
-                  info["year"], "FHD (1080p)", info["rating"], info["rating"], info["poster_url"])
-    await message.answer(f"✅ «{info['title']}» добавлен!")
-
-@dp.message(Command("delfilm"))
-async def del_film_cmd(message: types.Message):
-    if message.from_user.id != ADMIN_ID: return
-    args = message.text.replace("/delfilm", "").strip()
-    if not args: await message.answer("Напиши: /delfilm ID"); return
-    try:
-        name = await delete_film(int(args))
-        await message.answer(f"✅ «{name}» удалён." if name else "❌ Не найден.")
-    except ValueError: await message.answer("❌ ID должен быть числом.")
-
-@dp.message(Command("listfilms"))
-async def list_films_cmd(message: types.Message):
-    if message.from_user.id != ADMIN_ID: return
-    films = await get_films(limit=100)
-    if not films: await message.answer("База пуста."); return
-    text = "📋 Фильмы:\n\n" + "\n".join([f"ID {f['id']} — {f['title']}" for f in films])
-    await message.answer(text[:4000])
-
-# ===== АДМИН: РЕШЕНИЕ ЗАЯВОК =====
-@dp.message(Command("resolve_problem"))
-async def resolve_problem_cmd(message: types.Message):
-    if message.from_user.id != ADMIN_ID: return
-    args = message.text.replace("/resolve_problem", "").strip()
-    if not args: await message.answer("Напиши: /resolve_problem ID"); return
-    try:
-        await resolve_problem(int(args))
-        await message.answer(f"✅ Проблема ID {args} помечена как решённая.")
-    except ValueError: await message.answer("❌ ID должен быть числом.")
-
-@dp.message(Command("resolve_order"))
-async def resolve_order_cmd(message: types.Message):
-    if message.from_user.id != ADMIN_ID: return
-    args = message.text.replace("/resolve_order", "").strip()
-    if not args: await message.answer("Напиши: /resolve_order ID"); return
-    try:
-        await resolve_order(int(args))
-        await message.answer(f"✅ Заказ ID {args} помечен как выполненный.")
-    except ValueError: await message.answer("❌ ID должен быть числом.")
 
 # ===== ЗАПУСК =====
 async def main():
