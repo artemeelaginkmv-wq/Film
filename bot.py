@@ -7,7 +7,7 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton,
-    ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+    ReplyKeyboardMarkup, KeyboardButton
 )
 
 # ========== НАСТРОЙКИ ==========
@@ -262,7 +262,6 @@ def back_kb(callback="main_menu"):
     ])
 
 def reply_menu_kb():
-    """Reply-кнопка «Меню» внизу слева."""
     return ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text="📋 Меню")]],
         resize_keyboard=True,
@@ -271,6 +270,7 @@ def reply_menu_kb():
 
 # ========== ХЕЛПЕР ==========
 async def send_section(callback, image_url, caption, keyboard):
+    """Отправляет раздел с картинкой (если есть) или только текстом."""
     if image_url:
         try:
             await callback.message.edit_media(
@@ -286,6 +286,14 @@ async def send_section(callback, image_url, caption, keyboard):
         await callback.message.edit_text(caption, reply_markup=keyboard, parse_mode="HTML")
     except Exception:
         await callback.message.answer(caption, reply_markup=keyboard, parse_mode="HTML")
+
+async def send_text_section(callback, caption, keyboard):
+    """Отправляет только текст — удаляет старое сообщение (если было фото)."""
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+    await callback.message.answer(caption, reply_markup=keyboard, parse_mode="HTML")
 
 def format_film(film):
     text = (
@@ -312,7 +320,7 @@ def film_kb(film_id):
 @dp.message(CommandStart())
 async def start_cmd(message: types.Message):
     await add_visit(message.from_user.id)
-    user_states[message.from_user.id] = None  # Сброс состояния
+    user_states[message.from_user.id] = None
     ok, not_sub = await is_subscribed(message.from_user.id)
     if not ok:
         await message.answer(
@@ -320,23 +328,19 @@ async def start_cmd(message: types.Message):
             reply_markup=subscribe_kb(not_sub)); return
     welcome = (
         f"Добро пожаловать, {message.from_user.first_name}! 👋\n\n"
-        "Здесь ты можешь найти и посмотреть любимые фильмы в удобном формате."
-    )
+        "Здесь ты можешь найти и посмотреть любимые фильмы в удобном формате.")
     is_admin = message.from_user.id == ADMIN_ID
     try:
         await message.answer_photo(photo=IMG_MAIN, caption=welcome, reply_markup=main_menu_kb(is_admin), parse_mode="HTML")
     except Exception:
         await message.answer(welcome, reply_markup=main_menu_kb(is_admin), parse_mode="HTML")
-    # 👇 Reply-кнопка "Меню"
     await message.answer("📋 Кнопка меню появилась внизу слева 👇", reply_markup=reply_menu_kb())
 
 @dp.message(lambda m: m.text == "📋 Меню")
 async def menu_button(message: types.Message):
     user_states[message.from_user.id] = None
-    welcome = (
-        f"Добро пожаловать, {message.from_user.first_name}! 👋\n\n"
-        "Здесь ты можешь найти и посмотреть любимые фильмы в удобном формате."
-    )
+    welcome = (f"Добро пожаловать, {message.from_user.first_name}! 👋\n\n"
+               "Здесь ты можешь найти и посмотреть любимые фильмы в удобном формате.")
     is_admin = message.from_user.id == ADMIN_ID
     try:
         await message.answer_photo(photo=IMG_MAIN, caption=welcome, reply_markup=main_menu_kb(is_admin), parse_mode="HTML")
@@ -351,9 +355,8 @@ async def check_sub(callback: types.CallbackQuery):
 
 @dp.callback_query(lambda c: c.data == "main_menu")
 async def main_menu(callback: types.CallbackQuery):
-    welcome = (
-        f"Добро пожаловать, {callback.from_user.first_name}! 👋\n\n"
-        "Здесь ты можешь найти и посмотреть любимые фильмы в удобном формате.")
+    welcome = (f"Добро пожаловать, {callback.from_user.first_name}! 👋\n\n"
+               "Здесь ты можешь найти и посмотреть любимые фильмы в удобном формате.")
     is_admin = callback.from_user.id == ADMIN_ID
     await send_section(callback, IMG_MAIN, welcome, main_menu_kb(is_admin))
 
@@ -387,10 +390,9 @@ async def support(callback: types.CallbackQuery):
 @dp.callback_query(lambda c: c.data == "problem_write")
 async def problem_write(callback: types.CallbackQuery):
     user_states[callback.from_user.id] = "problem_write"
-    await callback.message.edit_text(
+    await send_text_section(callback,
         "✍️ <b>Написать о проблеме</b>\n\nОпиши подробно свою проблему или баг.",
-        reply_markup=back_kb("support"),
-        parse_mode="HTML")
+        back_kb("support"))
 
 # ===== СТОЛ ЗАКАЗОВ =====
 @dp.callback_query(lambda c: c.data == "orders")
@@ -416,7 +418,9 @@ async def admin_panel(callback: types.CallbackQuery):
             media=types.InputMediaPhoto(media=IMG_ADMIN, caption="⚙️ <b>Панель управления</b>", parse_mode="HTML"),
             reply_markup=admin_menu_kb())
     except Exception:
-        await callback.message.edit_text("⚙️ Панель управления", reply_markup=admin_menu_kb())
+        try: await callback.message.delete()
+        except Exception: pass
+        await callback.message.answer_photo(photo=IMG_ADMIN, caption="⚙️ <b>Панель управления</b>", reply_markup=admin_menu_kb(), parse_mode="HTML")
 
 @dp.callback_query(lambda c: c.data == "admin_stats")
 async def admin_stats(callback: types.CallbackQuery):
@@ -429,7 +433,7 @@ async def admin_stats(callback: types.CallbackQuery):
             f"🗓 За месяц: <b>{stats['month']}</b>\n"
             f"📈 Всего заходов: <b>{stats['total']}</b>\n\n"
             f"🎬 Фильмов в каталоге: <b>{films_count}</b>")
-    await callback.message.edit_text(text, reply_markup=back_kb("admin_panel"), parse_mode="HTML")
+    await send_text_section(callback, text, back_kb("admin_panel"))
 
 @dp.callback_query(lambda c: c.data == "admin_requests")
 async def admin_requests(callback: types.CallbackQuery):
@@ -448,7 +452,7 @@ async def admin_requests(callback: types.CallbackQuery):
         for p in problems[:10]:
             status = "✅" if p["status"] == "resolved" else "🆕"
             text += f"{status} <code>{p['user_id']}</code>: {p['text'][:80]}...\n"
-    await callback.message.edit_text(text[:4000], reply_markup=back_kb("admin_panel"), parse_mode="HTML")
+    await send_text_section(callback, text[:4000], back_kb("admin_panel"))
 
 @dp.callback_query(lambda c: c.data == "admin_channels")
 async def admin_channels(callback: types.CallbackQuery):
@@ -463,39 +467,39 @@ async def admin_channels(callback: types.CallbackQuery):
         [InlineKeyboardButton(text="➕ Добавить", callback_data="admin_add_channel")],
         [InlineKeyboardButton(text="🗑 Удалить", callback_data="admin_del_channel")],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_panel")]])
-    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    await send_text_section(callback, text, kb)
 
 @dp.callback_query(lambda c: c.data == "admin_add_channel")
 async def admin_add_channel(callback: types.CallbackQuery):
     if callback.from_user.id != ADMIN_ID: return
     user_states[callback.from_user.id] = "admin_add_channel"
-    await callback.message.edit_text("Напиши @username или -100xxxx канала.", reply_markup=back_kb("admin_panel"))
+    await send_text_section(callback, "Напиши @username или -100xxxx канала.", back_kb("admin_panel"))
 
 @dp.callback_query(lambda c: c.data == "admin_del_channel")
 async def admin_del_channel(callback: types.CallbackQuery):
     if callback.from_user.id != ADMIN_ID: return
     user_states[callback.from_user.id] = "admin_del_channel"
-    await callback.message.edit_text("Напиши @username канала для удаления.", reply_markup=back_kb("admin_panel"))
+    await send_text_section(callback, "Напиши @username канала для удаления.", back_kb("admin_panel"))
 
 @dp.callback_query(lambda c: c.data == "admin_add_film")
 async def admin_add_film(callback: types.CallbackQuery):
     if callback.from_user.id != ADMIN_ID: return
     user_states[callback.from_user.id] = "admin_add_film"
-    await callback.message.edit_text("➕ Напиши название фильма — найду в TMDB.", reply_markup=back_kb("admin_panel"))
+    await send_text_section(callback, "➕ Напиши название фильма — найду в TMDB.", back_kb("admin_panel"))
 
 @dp.callback_query(lambda c: c.data == "admin_del_film")
 async def admin_del_film(callback: types.CallbackQuery):
     if callback.from_user.id != ADMIN_ID: return
     user_states[callback.from_user.id] = "admin_del_film"
-    await callback.message.edit_text("🗑 Напиши ID фильма.", reply_markup=back_kb("admin_panel"))
+    await send_text_section(callback, "🗑 Напиши ID фильма.", back_kb("admin_panel"))
 
 @dp.callback_query(lambda c: c.data == "admin_list_films")
 async def admin_list_films(callback: types.CallbackQuery):
     if callback.from_user.id != ADMIN_ID: return
     films = await get_films(limit=100)
-    if not films: await callback.message.edit_text("База пуста.", reply_markup=back_kb("admin_panel")); return
+    if not films: await send_text_section(callback, "База пуста.", back_kb("admin_panel")); return
     text = "📋 <b>Фильмы:</b>\n\n" + "\n".join([f"ID {f['id']} — {f['title']}" for f in films])
-    await callback.message.edit_text(text[:4000], reply_markup=back_kb("admin_panel"), parse_mode="HTML")
+    await send_text_section(callback, text[:4000], back_kb("admin_panel"))
 
 # ===== РАЗДЕЛЫ =====
 @dp.callback_query(lambda c: c.data == "new")
